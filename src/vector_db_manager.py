@@ -25,10 +25,31 @@ class VectorDBManager:
             embedding_function=self.embedding_model,
             collection_metadata={"hnsw:space": "cosine"}
         )
+        
+    def add_project(self, project_data: dict) -> bool:
+        #성공 시 True, 중복 시 False를 반환
 
+        content = (f"프로젝트 '{project_data['project_description']}'의 주 서비스는 {project_data['main_service']}, "
+                   f"세부 서비스는 {project_data['sub_service']}, 재료는 {project_data['material']}입니다.")
+        content_hash = hashlib.sha256(content.encode()).hexdigest()
+
+        existing_docs = self.project_db.get(ids=[content_hash])
+        if existing_docs and existing_docs['ids']:
+            return False
+
+        metadata = {
+            'id': content_hash, 
+            'project_description': str(project_data['project_description']),
+            'main_service': str(project_data['main_service']),
+            'sub_service': str(project_data['sub_service']),
+            'material': str(project_data['material'])
+        }
+        document = Document(page_content=content, metadata=metadata)
+        
+        self.project_db.add_documents([document], ids=[content_hash])
+        return True
+    
     def update_project_db(self):
-        """manufacturing_dataset.csv 파일로 프로젝트 DB를 업데이트합니다."""
-        print("프로젝트 DB 업데이트를 시작합니다...")
         existing_ids = set(item['id'] for item in self.project_db.get(include=["metadatas"])['metadatas'] if 'id' in item)
         print(f"현재 프로젝트 DB에 저장된 문서는 총 {len(existing_ids)}개입니다.")
 
@@ -72,18 +93,17 @@ class VectorDBManager:
             )
 
         try:
-            df = pd.read_csv(SERVICE_CSV_PATH, encoding='utf-8').fillna('') # 빈칸(NaN)을 빈 문자열로 처리
+            df = pd.read_csv(SERVICE_CSV_PATH, encoding='utf-8').fillna('') 
         except FileNotFoundError:
             print(f"오류: {SERVICE_CSV_PATH} 파일을 찾을 수 없습니다.")
             return
         
         documents = []
         for _, row in df.iterrows():
-            # [핵심] 세부 서비스의 경우, 주 서비스의 맥락을 포함하여 content를 생성
-            if row['sub_service']: # 세부 서비스인 경우
+            if row['sub_service']: 
                 content = f"주 서비스 '{row['main_service']}'의 세부 서비스인 '{row['sub_service']}'에 대한 설명: {row['description']}"
                 metadata = {'service_name': row['sub_service'], 'parent_service': row['main_service']}
-            else: # 주 서비스인 경우
+            else: 
                 content = f"주 서비스 '{row['main_service']}'에 대한 설명: {row['description']}"
                 metadata = {'service_name': row['main_service']}
             
@@ -102,5 +122,7 @@ class VectorDBManager:
                     search_kwargs={'k': RETRIEVER_K, 'score_threshold': SCORE_THRESHOLD}
                 )
         elif mode == "explain":
-            # 서비스 설명은 보통 정확한 명칭으로 검색하므로, k=1로 설정하여 가장 정확한 것 하나만 찾음
-            return self.service_db.as_retriever(search_kwargs={'k': 1})
+            return self.service_db.as_retriever(
+                search_type="similarity_score_threshold",
+                search_kwargs={'k': 1, 'score_threshold': SCORE_THRESHOLD}
+            )
