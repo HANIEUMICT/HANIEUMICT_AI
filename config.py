@@ -24,4 +24,4 @@ EMBEDDING_MODEL_NAME = "jhgan/ko-sroberta-multitask"
 OLLAMA_MODEL_NAME = "chat_bot"
 
 RETRIEVER_K = 3  
-SCORE_THRESHOLD = 0.5
+SCORE_THRESHOLD = 0.65

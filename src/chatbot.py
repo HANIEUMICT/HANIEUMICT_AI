@@ -6,60 +6,44 @@ from langchain.schema.output_parser import StrOutputParser
 from langchain.memory import ConversationBufferMemory
 from config import OLLAMA_MODEL_NAME, SERVICE_HIERARCHY_PATH
 
-# --- 프롬프트 템플릿 정의 ---
 PROMPT_RECOMMEND = """
-You are a precise and honest AI manufacturing consultant. Your task is to format the information from the [RETRIEVED CONTEXT] as a direct answer to the user's [QUESTION].
-
+You are a precise and honest AI manufacturing consultant. Your task is to analyze up to 3 [RETRIEVED CONTEXT] and provide the most helpful recommendation based on the user's [QUESTION].
 [INSTRUCTIONS]
-1.  **Always start your answer with the user's original [QUESTION]** in the following format: `'{question}' 프로젝트에 대한 추천 서비스는 다음과 같습니다:`
-2.  **Use the information from the [RETRIEVED CONTEXT]** to list the available services below the starting line.
-3.  **CRITICAL RULE:** Format the list using Markdown line breaks (`\n`). Only include a line for a service if its value exists in the context and is not 'N/A' or empty. Use the exact Korean labels below.
-    - `주서비스 : {{main_service}}`
-    - `세부서비스: {{sub_service}}`
-    - `재료: {{material}}`
-4.  NEVER invent information.
-5.  **ABSOLUTE FINAL RULE: Your response must contain ONLY the answer itself, without any additional explanations, comments, or notes like "참고" , "신뢰도", etc.
+1.  Start your answer with: `'{question}'에 대한 추천 서비스는 다음과 같습니다.`
+    - Then, list the available information from the context.
+     -Only include a line for a service (`주서비스`, `세부서비스`, `재료`) if its value exists in the context.
+2.  NEVER invent information.
+3.  Your response must contain ONLY the answer itself, without any additional explanations, comments, or notes like "참고" , "신뢰도", etc.
 
 ---
 [EXAMPLE]
 CONTEXT:
 - project_description: 정밀 측정 장비용 광학 렌즈
 - main_service: 연마/폴리싱
-- sub_service: N/A
 - material: 유리/세라믹
 QUESTION: 광학 렌즈
 CORRECT ANSWER:
-'광학 렌즈'에 대한 추천 서비스는 다음과 같습니다:
-주서비스 : 조립 \n
-재료 : 유리/세라믹
+'광학 렌즈'에 대한 추천 서비스는 다음과 같습니다.
+주서비스 : 연마/폴리싱
+재료: 유리/세라믹
 ---
-
 [RETRIEVED CONTEXT]
 {context}
 ---
 [QUESTION]
 {question}
 ---
-[ANSWER (in Korean)]
+[ANSWER (in Korean only, like the examples, with line breaks, without any other notes or labels)]
 """
 
 PROMPT_EXPLAIN = """
-You are a helpful AI assistant. Your job is to clearly explain the service the user asked about, based on the [Context].
-
-[INSTRUCTIONS]
-1.  Read the [Context] to understand the service.
-2.  If the context describes a sub-service, also mention which main service it belongs to.
-3.  **You MUST summarize the entire explanation in 3 sentences or less.**
-4.  Answer in a natural and friendly tone in Korean.
-
+You are an AI assistant that explains concepts. Your task is to explain the following [CONTEXT] in exactly one clear and concise Korean sentences.
+Your response must contain ONLY the answer itself, without comments, or notes like "참고" , "신뢰도", etc.
 ---
-[Context]
+[CONTEXT]
 {context}
 ---
-[Question]
-{question}
----
-[ANSWER (in Korean)]
+[ANSWER (in Korean only, without any other notes or labels like "참고" "신뢰도")]
 """
 
 
@@ -89,19 +73,30 @@ class Chatbot:
         return prompt | self.llm | StrOutputParser()
 
     def _format_project_docs(self, docs: list) -> str:
-        """최대 3개의 프로젝트 문서 정보를 구조화된 텍스트로 변환합니다."""
-        if not docs: return ""
-        
+        if not docs:
+            return ""
+
         formatted_strings = []
         for i, doc in enumerate(docs):
             metadata = doc.metadata
-            formatted_strings.append(
-                f"후보 {i+1}:\n"
-                f"- project_description: {metadata.get('project_description', 'N/A')}\n"
-                f"- main_service: {metadata.get('main_service', 'N/A')}\n"
-                f"- sub_service: {metadata.get('sub_service', 'N/A')}\n"
-                f"- material: {metadata.get('material', 'N/A')}"
-            )
+            
+            parts = [f"--- 후보 {i+1} ---"]
+            parts.append(f"- project_description: {metadata.get('project_description', 'N/A')}")
+
+            main_service = metadata.get('main_service')
+            if main_service and main_service not in ['N/A', '해당 없음', '']:
+                parts.append(f"  main_service: {main_service}")
+
+            sub_service = metadata.get('sub_service')
+            if sub_service and sub_service not in ['N/A', '해당 없음', '']:
+                parts.append(f"  sub_service: {sub_service}")
+                
+            material = metadata.get('material')
+            if material and material not in ['N/A', '해당 없음', '']:
+                parts.append(f"  material: {material}")
+
+            formatted_strings.append("\n".join(parts))
+
         return "\n\n".join(formatted_strings)
 
     def generate_response(self, query: str, mode: str) -> str:
@@ -121,7 +116,7 @@ class Chatbot:
                 return "죄송합니다. 관련 정보를 찾을 수 없습니다."
             
             context = retrieved_docs[0].page_content
-            inputs = {"context": context, "question": query}
+            inputs = {"context": context}
             return self.explain_chain.invoke(inputs)
             
         return "오류: 잘못된 모드가 선택되었습니다."
